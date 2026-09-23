@@ -136,6 +136,76 @@ TOOLS_SCHEMA = [
 ]
 
 
+# --- Personality ---
+
+SYSTEM_PROMPT = (
+    "You are Nemo, a coding/database assistant with a casual, slightly awkward, earnest personality — "
+    "like a smart kid who overexplains things and gets a little too excited about solving problems. "
+    "Talk plainly and informally, not like a corporate support bot. Short sentences are fine. Admit when "
+    "you're unsure instead of bluffing. You have access to a company database tool — use it when it's "
+    "actually relevant to the question, don't force it in."
+)
+
+
+# --- L1 startup warm-up: verify the pieces Nemo depends on before talking ---
+
+def check_env_key() -> tuple:
+    ok = bool(os.getenv("NVIDIA_API_KEY"))
+    return ok, "NVIDIA_API_KEY loaded" if ok else "NVIDIA_API_KEY missing — check your .env"
+
+
+def check_database() -> tuple:
+    try:
+        init_db()
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("SELECT 1 FROM employees LIMIT 1")
+        conn.close()
+        return True, f"{DB_PATH.name} reachable"
+    except Exception as e:
+        return False, f"{DB_PATH.name} error: {e}"
+
+
+def check_mcp_server() -> tuple:
+    mcp_path = WORKSPACE_ROOT / "mcp_server.py"
+    if not mcp_path.exists():
+        return False, "mcp_server.py not found"
+    try:
+        compile(mcp_path.read_text(encoding="utf-8"), str(mcp_path), "exec")
+        return True, "mcp_server.py present and syntax-valid"
+    except SyntaxError as e:
+        return False, f"mcp_server.py syntax error: {e}"
+
+
+def check_tools() -> tuple:
+    n = len(AVAILABLE_TOOLS)
+    return n > 0, f"{n} local tool(s) registered: {', '.join(AVAILABLE_TOOLS)}"
+
+
+def run_startup_checks() -> bool:
+    """L1 warm-up: confirm key, database, MCP server, and tool registry are all sane
+    before Nemo says a word. Returns True only if everything passed."""
+    load_env_file(WORKSPACE_ROOT / ".env")
+    checks = [
+        ("API key", check_env_key),
+        ("Database", check_database),
+        ("MCP server", check_mcp_server),
+        ("Tools", check_tools),
+    ]
+    print("\n=== NemoAid L1 startup check ===")
+    all_ok = True
+    for label, fn in checks:
+        ok, detail = fn()
+        status = "OK  " if ok else "FAIL"
+        print(f"[{status}] {label}: {detail}")
+        all_ok = all_ok and ok
+    print("=" * 33)
+    return all_ok
+
+
+def greet() -> None:
+    print("\nhey — it's Nemo. still getting my footing here honestly, but everything checked out above, so I'm ready when you are.\n")
+
+
 def call_with_retry(client: OpenAI, messages, tools, max_retries: int = 3):
     """Exponential backoff around the cloud call — the free endpoint rate-limits."""
     delay = 2
@@ -161,7 +231,7 @@ def run_agent(user_prompt: str) -> None:
     init_db()
 
     messages = [
-        {"role": "system", "content": "You are a helpful AI assistant with access to a company database tool."},
+        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -199,6 +269,11 @@ def run_agent(user_prompt: str) -> None:
 
 
 if __name__ == "__main__":
+    if not run_startup_checks():
+        logging.error("One or more startup checks failed above — fix those before running Nemo.")
+        sys.exit(1)
+    greet()
+
     prompt = sys.argv[1] if len(sys.argv) > 1 else \
         "Who works in the Engineering department and what are their salaries?"
     run_agent(prompt)
