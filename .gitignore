@@ -47,3 +47,8 @@ cover/
 
 # Aider history and logs
 .aider*
+
+# Secrets - never commit
+.env
+*.env
+company.db
